@@ -1,0 +1,1 @@
+{"name":"我的旅行手帳","short_name":"旅行手帳","description":"個人旅行行程與花費整合工具","start_url":"./index.html","scope":"./","display":"standalone","background_color":"#f4f6f5","theme_color":"#254b54","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
