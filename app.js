@@ -80,8 +80,17 @@ function exportExcel(){
    rows[3].push(['','','','','','','','']);
    for(const [currency,v] of Object.entries(totals).sort(([a],[b])=>a.localeCompare(b))){
     rows[3].push([t.name,'統計','總計','',currency,v.total,'','']);
-    rows[3].push([t.name,'統計','已付款','',currency,v.paid,'','']);
-    rows[3].push([t.name,'統計','未付款','',currency,v.unpaid,'','']);
+    // Match the summary layout: one line per paid/unpaid expense, item in column D.
+    for(const x of expenseEntries.filter(x=>x.currency===currency&&x.paid)){
+     rows[3].push([t.name,'統計','已付款',x.name,currency,x.amount,'','']);
+    }
+    if(!expenseEntries.some(x=>x.currency===currency&&x.paid))
+     rows[3].push([t.name,'統計','已付款','',currency,0,'','']);
+    for(const x of expenseEntries.filter(x=>x.currency===currency&&!x.paid)){
+     rows[3].push([t.name,'統計','未付款',x.name,currency,x.amount,'','']);
+    }
+    if(!expenseEntries.some(x=>x.currency===currency&&!x.paid))
+     rows[3].push([t.name,'統計','未付款','',currency,0,'','']);
    }
    rows[3].push(['','','','','','','','']);
   }
