@@ -60,7 +60,39 @@ async function cloudDownload(){if(cloudBusy||!cloudToken)return;cloudBusy=true;t
 // 只有單邊變動才允許同步；雙邊都變動一律停止，不猜測哪邊較新。
 function syncKey(){return 'travel-journal-sync-baseline-v1-'+cloudUser}
 function normalized(data){const out={};for(const n of cloudStores)out[n]=[...(data[n]||[])].sort((a,b)=>String(a.id).localeCompare(String(b.id)));return out}
-function snapshotText(data){return JSON.stringify(normalized(data))}
+function canonicalValue(v){
+  if(Array.isArray(v))return v.map(canonicalValue);
+  if(v&&typeof v==='object'){
+    const out={};for(const k of Object.keys(v).sort())out[k]=canonicalValue(v[k]);
+    return out;
+  }
+  return v;
+}
+function snapshotText(data){return JSON.stringify(canonicalValue(normalized(data)))}
+function snapshotDifferences(local,remote){
+  const lines=[];
+  for(const n of cloudStores){
+    const a=new Map(local[n].map(x=>[String(x.id),x]));
+    const b=new Map(remote[n].map(x=>[String(x.id),x]));
+    const ids=[...new Set([...a.keys(),...b.keys()])].sort();
+    let missingLocal=0,missingCloud=0,different=0;
+    const fields=new Map();
+    for(const id of ids){
+      if(!a.has(id)){missingLocal++;continue}
+      if(!b.has(id)){missingCloud++;continue}
+      const x=a.get(id),y=b.get(id);
+      if(JSON.stringify(canonicalValue(x))===JSON.stringify(canonicalValue(y)))continue;
+      different++;
+      for(const k of new Set([...Object.keys(x),...Object.keys(y)])){
+        if(JSON.stringify(canonicalValue(x[k]))!==JSON.stringify(canonicalValue(y[k])))
+          fields.set(k,(fields.get(k)||0)+1);
+      }
+    }
+    lines.push(n+'：本機 '+a.size+' 筆／雲端 '+b.size+' 筆；本機缺少 '+missingLocal+'、雲端缺少 '+missingCloud+'、內容不同 '+different);
+    if(fields.size)lines.push('  差異欄位（僅名稱與筆數）：'+[...fields].map(([k,v])=>k+' '+v).join('、'));
+  }
+  return lines.join('\\n');
+}
 async function localSnapshot(){const data={};for(const n of cloudStores)data[n]=await all(n);return normalized(data)}
 async function remoteSnapshot(){const data={};for(const n of cloudStores){data[n]=[];for(let offset=0;;offset+=500){const batch=await cloudRequest('/rest/v1/'+n+'?select=data&owner_id=eq.'+encodeURIComponent(cloudUser)+'&order=id.asc&limit=500&offset='+offset);data[n].push(...batch.map(x=>x.data));if(batch.length<500)break}}return normalized(data)}
 function validateSnapshot(data){const ids=new Set(data.trips.map(x=>String(x.id)));for(const n of ['items','preps','packing'])for(const x of data[n])if(!ids.has(String(x.tripId)))throw Error('資料關聯不完整，停止同步');for(const n of cloudStores){const keys=data[n].map(x=>String(x.id));if(new Set(keys).size!==keys.length)throw Error(n+' 存在重複 ID，停止同步')}}
@@ -74,10 +106,10 @@ async function pushSnapshot(local,remote){
 async function syncManual(){if(cloudBusy||!cloudToken)return;cloudBusy=true;try{
   const local=await localSnapshot(),remote=await remoteSnapshot();validateSnapshot(local);validateSnapshot(remote);
   const l=snapshotText(local),r=snapshotText(remote),base=localStorage.getItem(syncKey());
-  if(base===null){if(l!==r)throw Error('本機與雲端目前不同，不能直接建立同步基準。請先確認兩邊資料一致。');if(!confirm('本機與雲端四類資料完全一致。要建立這台裝置的同步基準嗎？這一步不修改任何資料。'))return;localStorage.setItem(syncKey(),l);alert('已建立同步基準。以後可按「檢查並同步」。');return}
+  if(base===null){if(l!==r)throw Error('本機與雲端內容不同，已停止建立基準。\\n\\n'+snapshotDifferences(local,remote)+'\\n\\n本次僅查詢，未修改任何資料。');if(!confirm('本機與雲端四類資料完全一致。要建立這台裝置的同步基準嗎？這一步不修改任何資料。'))return;localStorage.setItem(syncKey(),l);alert('已建立同步基準。以後可按「檢查並同步」。');return}
   if(l===r){localStorage.setItem(syncKey(),l);alert('本機與雲端資料一致，無需同步。');return}
   const localChanged=l!==base,remoteChanged=r!==base;
-  if(localChanged&&remoteChanged)throw Error('本機和雲端都曾修改，為避免覆蓋已停止。請保留兩邊資料並匯出 JSON 備份。');
+  if(localChanged&&remoteChanged)throw Error('本機和雲端都曾修改，已停止。\\n'+snapshotDifferences(local,remote)+'\\n請保留兩邊資料及 JSON 備份。');
   if(!localChanged&&remoteChanged){if(!confirm('偵測到雲端有更新、本機沒有變動。要下載雲端更新到這台裝置嗎？'))return;await replaceLocalSnapshot(remote);localStorage.setItem(syncKey(),r);alert('已從雲端更新本機資料。');return}
   if(localChanged&&!remoteChanged){if(!confirm('偵測到本機有更新、雲端沒有變動。要將本機變更（包含刪除）同步到雲端嗎？'))return;await pushSnapshot(local,remote);const check=await remoteSnapshot();if(snapshotText(check)!==l)throw Error('雲端回讀結果不一致，已停止更新同步基準，請勿重試前先檢查。');localStorage.setItem(syncKey(),l);alert('本機變更已同步到雲端，並完成回讀核對。');return}
   throw Error('同步狀態無法判定，已停止。');
