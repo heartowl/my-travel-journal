@@ -43,20 +43,20 @@ const fields=['tripName','tripStart','tripEnd','tripRegion','date','time','kind'
 function exportCsv(){let lines=[fields.join(',')];for(let t of trips){let rows=items.filter(x=>x.tripId===t.id).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.time||'99:99').localeCompare(b.time||'99:99')||(a.order||0)-(b.order||0)||(a.id||'').localeCompare(b.id||''));if(!rows.length)rows=[{}];for(let x of rows){let a={tripName:t.name,tripStart:t.start,tripEnd:t.end,tripRegion:t.region,...x};lines.push(fields.map(k=>csvCell(a[k]??'')).join(','))}}download(new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}),'旅行行程_'+localISODate()+'.csv');toast('CSV 已匯出')}
 function exportJson(){download(new Blob([JSON.stringify({format:'travel-journal',version:2,exportedAt:new Date().toISOString(),trips,items,preps,packing},null,2)],{type:'application/json'}),'旅行完整備份_'+localISODate()+'.json');toast('完整備份已匯出')}
 async function importJson(file){if(!file)return;try{if(file.size>15*1024*1024)throw Error('檔案過大');let data=JSON.parse(await file.text());if(data.format!=='travel-journal'||data.version!==2||!Array.isArray(data.trips)||!Array.isArray(data.items))throw Error('不是相容的備份格式');if(data.trips.length>2000||data.items.length>100000)throw Error('資料筆數異常');for(let t of data.trips)if(!t.id||!t.name||!/^\d{4}-\d\d-\d\d$/.test(t.start)||!/^\d{4}-\d\d-\d\d$/.test(t.end))throw Error('旅程資料不完整');for(let x of data.items)if(!x.id||!x.tripId||!x.title||!x.date)throw Error('行程資料不完整');if(data.preps!==undefined&&(!Array.isArray(data.preps)||data.preps.length>100000))throw Error('行前準備資料格式錯誤');for(let p of data.preps||[])if(!p.id||!p.tripId||!p.name||!data.trips.some(t=>t.id===p.tripId))throw Error('行前準備資料不完整');if(data.packing!==undefined&&(!Array.isArray(data.packing)||data.packing.length>100000))throw Error('行李清單格式錯誤');for(const x of data.packing||[])if(!x.id||!x.tripId||!x.name||!data.trips.some(t=>t.id===x.tripId))throw Error('行李清單資料不完整');if(!confirm(`將以備份內容取代目前資料（${data.trips.length} 趟旅程、${data.items.length} 筆行程／花費、${(data.preps||[]).length} 筆行前準備）。確定嗎？建議先匯出目前備份。`))return;await new Promise((res,rej)=>{let tx=db.transaction(['trips','items','preps','packing'],'readwrite');tx.objectStore('trips').clear();tx.objectStore('items').clear();tx.objectStore('preps').clear();tx.objectStore('packing').clear();for(let x of data.packing||[])tx.objectStore('packing').put(x);for(let p of data.preps||[])tx.objectStore('preps').put(p);for(let t of data.trips)tx.objectStore('trips').put(t);for(let x of data.items)tx.objectStore('items').put(x);tx.oncomplete=res;tx.onerror=()=>rej(tx.error)});tripId=null;day=null;await refresh();toast('還原完成')}catch(e){toast('匯入失敗：'+e.message)}}
-function settingsHtml(){return `<div class="card"><h2 class="title">備份與還原</h2><p class="muted">資料保存在目前 iPhone 的此 App 網站儲存空間。GitHub 不會保存你的行程。</p><div class="notice">重要：iPhone 清除網站資料、移除 App 或系統清理時，本機資料可能遺失。請定期備份到 Google Drive。</div><hr class="divider"><h3>完整備份（推薦）</h3><p class="muted">JSON 可完整還原所有旅程、行前準備、時間、備註、連結與花費；儲存到 Google Drive 即可。</p><button class="btn" id="backup">匯出完整備份 JSON</button><hr class="divider"><h3>Excel 查看</h3><p class="muted">Excel 包含行程、準備事項、行李清單及花費總覽；不可用來還原資料。</p><button class="btn secondary" id="csv">匯出 Excel（.xlsx）</button><hr class="divider"><h3>還原資料</h3><p class="muted">選擇先前匯出的 JSON，將取代目前所有資料。</p><input type="file" id="restore" accept=".json,application/json"><hr class="divider"><div class="muted">目前：${trips.length} 趟旅程、${items.length} 筆行程／花費、${preps.length} 筆行前準備。無需登入、無雲端同步。</div></div>`}
+function settingsHtml(){return `<div class="card"><h2 class="title">備份與還原</h2><p class="muted">資料保存在目前 iPhone 的此 App 網站儲存空間。GitHub 不會保存你的行程。</p><div class="notice">重要：iPhone 清除網站資料、移除 App 或系統清理時，本機資料可能遺失。請定期備份到 Google Drive。</div><hr class="divider"><h3>完整備份（推薦）</h3><p class="muted">JSON 可完整還原所有旅程、行前準備、時間、備註、連結與花費；儲存到 Google Drive 即可。</p><button class="btn" id="backup">匯出完整備份 JSON</button><hr class="divider"><h3>Excel 查看</h3><p class="muted">Excel 包含行程、準備事項、行李清單及花費明細與統計；不可用來還原資料。</p><button class="btn secondary" id="csv">匯出 Excel（.xlsx）</button><hr class="divider"><h3>還原資料</h3><p class="muted">選擇先前匯出的 JSON，將取代目前所有資料。</p><input type="file" id="restore" accept=".json,application/json"><hr class="divider"><div class="muted">目前：${trips.length} 趟旅程、${items.length} 筆行程／花費、${preps.length} 筆行前準備。無需登入、無雲端同步。</div></div>`}
 function bindSettings(){$('#backup').onclick=exportJson;$('#csv').onclick=exportExcel;$('#restore').onchange=e=>importJson(e.target.files[0])}
 async function init(){try{db=await openDb();await refresh();$('#addTripTop').onclick=()=>tripForm();$('#closeModal').onclick=close;$('#modal').onclick=e=>{if(e.target.id==='modal')close()};document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render()});if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});}catch(e){$('#view').innerHTML=`<div class="card"><h2>無法開啟本機資料庫</h2><p>${esc(e.message)}</p><p>請使用 Safari 的 HTTPS 網址開啟，並確認不是無痕瀏覽。</p></div>`}}
 init();
 
 // Self-contained, offline XLSX writer: OOXML worksheets in an uncompressed ZIP archive.
 function exportExcel(){
- const sheetNames=['行程','準備事項','行李清單','花費總覽'];
+ const sheetNames=['行程','準備事項','行李清單','花費明細與統計'];
  const ordered=trips.slice().sort((a,b)=>a.start.localeCompare(b.start));
  const rows=[
  [['旅程','開始日期','結束日期','地區','日期','時間','類型','名稱','出發','抵達','說明','連結','金額','幣別','已付款']],
  [['旅程','準備項目','預計完成日期','實際完成日期','金額','幣別','計入花費','備註','連結']],
  [['旅程','物品','已打包']],
- [['旅程','幣別','合計金額']]
+ [['旅程','日期','來源','項目','幣別','金額','已付款','備註']]
  ];
  for(const t of ordered){
   for(const x of items.filter(x=>x.tripId===t.id).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.time||'99:99').localeCompare(b.time||'99:99')))
@@ -64,8 +64,27 @@ function exportExcel(){
   for(const p of preps.filter(x=>x.tripId===t.id).sort((a,b)=>(a.planDate||'9999').localeCompare(b.planDate||'9999')))
    rows[1].push([t.name,p.name,p.planDate||'',p.doneDate||'',p.amount===''?'':Number(p.amount||0),p.currency||'TWD',p.includeExpense===false?'否':'是',p.note||'',p.url||'']);
   for(const x of packing.filter(x=>x.tripId===t.id).sort((a,b)=>(a.order||0)-(b.order||0)))rows[2].push([t.name,x.name,x.done?'是':'否']);
-  const totals={};for(const x of items.filter(x=>x.tripId===t.id&&Number(x.amount)>0).concat(preps.filter(x=>x.tripId===t.id&&x.includeExpense!==false&&Number(x.amount)>0))){const c=x.currency||'TWD';totals[c]=(totals[c]||0)+Number(x.amount)}
-  for(const [currency,total] of Object.entries(totals))rows[3].push([t.name,currency,total]);
+  // Export every counted expense as an auditable row, then totals per currency.
+  // Prep expenses without includeExpense (legacy backups) count by default, matching the app.
+  const expenseEntries=[
+   ...items.filter(x=>x.tripId===t.id&&Number(x.amount)>0).map(x=>({date:x.date||'',source:'行程',name:x.title||'',currency:x.currency||'TWD',amount:Number(x.amount),paid:!!x.paid,note:x.detail||''})),
+   ...preps.filter(x=>x.tripId===t.id&&x.includeExpense!==false&&Number(x.amount)>0).map(x=>({date:x.doneDate||x.planDate||'',source:'準備事項',name:x.name||'',currency:x.currency||'TWD',amount:Number(x.amount),paid:!!x.doneDate,note:x.note||''}))
+  ].sort((a,b)=>a.date.localeCompare(b.date)||a.source.localeCompare(b.source)||a.name.localeCompare(b.name));
+  const totals={};
+  for(const x of expenseEntries){
+   rows[3].push([t.name,x.date,x.source,x.name,x.currency,x.amount,x.paid?'是':'否',x.note]);
+   const c=x.currency;const v=totals[c]||(totals[c]={total:0,paid:0,unpaid:0});
+   v.total+=x.amount;v[x.paid?'paid':'unpaid']+=x.amount;
+  }
+  if(expenseEntries.length){
+   rows[3].push(['','','','','','','','']);
+   for(const [currency,v] of Object.entries(totals).sort(([a],[b])=>a.localeCompare(b))){
+    rows[3].push([t.name,'','統計','總計',currency,v.total,'','']);
+    rows[3].push([t.name,'','統計','已付款',currency,v.paid,'','']);
+    rows[3].push([t.name,'','統計','未付款',currency,v.unpaid,'','']);
+   }
+   rows[3].push(['','','','','','','','']);
+  }
  }
  const xmlEsc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c])).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'');
  const col=n=>{let s='';for(n++;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s};
