@@ -46,11 +46,17 @@ async function importJson(file){if(!file)return;try{if(file.size>15*1024*1024)th
 
 // Cloud transfer phase 1: deliberately manual and non-destructive.
 const CLOUD_URL='https://hweyjynxbwhjrtmkoxmr.supabase.co';
-let cloudKey='',cloudToken='',cloudUser='',cloudBusy=false;
+let cloudKey='',cloudToken='',cloudUser='',cloudBusy=false,cloudRefreshToken='',cloudExpiresAt=0;
+const AUTH_STORAGE='travel-journal-cloud-auth-v1';
+function saveCloudSession(){if(!cloudKey||!cloudRefreshToken||!cloudUser)return;localStorage.setItem(AUTH_STORAGE,JSON.stringify({key:cloudKey,refresh:cloudRefreshToken,user:cloudUser,expires:cloudExpiresAt,access:cloudToken}));}
+function clearCloudSession(){localStorage.removeItem(AUTH_STORAGE);cloudKey='';cloudToken='';cloudUser='';cloudRefreshToken='';cloudExpiresAt=0;}
+async function refreshCloudSession(){if(!cloudKey||!cloudRefreshToken)throw Error('登入已過期，請重新登入');const r=await fetch(CLOUD_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{'apikey':cloudKey,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:cloudRefreshToken})});const v=await r.json();if(!r.ok||!v.access_token||!v.refresh_token||!v.user?.id)throw Error('登入工作階段已失效，請重新登入');cloudToken=v.access_token;cloudRefreshToken=v.refresh_token;cloudUser=v.user.id;cloudExpiresAt=Date.now()+(Number(v.expires_in||3600)*1000);saveCloudSession();}
+async function restoreCloudSession(){try{const raw=localStorage.getItem(AUTH_STORAGE);if(!raw)return;const v=JSON.parse(raw);if(!String(v.key||'').startsWith('sb_publishable_')||!v.refresh||!v.user)return;cloudKey=v.key;cloudToken=v.access||'';cloudRefreshToken=v.refresh;cloudUser=v.user;cloudExpiresAt=Number(v.expires||0);if(Date.now()+120000>=cloudExpiresAt)await refreshCloudSession();render()}catch(e){clearCloudSession();render();toast('雲端登入已過期，請重新登入')}}
+async function ensureCloudSession(){if(cloudRefreshToken&&Date.now()+120000>=cloudExpiresAt)await refreshCloudSession();if(!cloudToken)throw Error('請先登入雲端');}
 const cloudStores=['trips','items','preps','packing'];
 function cloudHeaders(extra={}){return {'apikey':cloudKey,'Authorization':'Bearer '+cloudToken,...extra}}
-async function cloudRequest(path,options={}){const r=await fetch(CLOUD_URL+path,{...options,headers:{...cloudHeaders(),...(options.headers||{})}});const raw=await r.text();let value;try{value=raw?JSON.parse(raw):null}catch{value=raw}if(!r.ok)throw Error((value&& (value.message||value.msg||value.error_description||value.error))||'HTTP '+r.status);return value}
-async function cloudLogin(e){e.preventDefault();if(cloudBusy)return;const f=new FormData(e.target);const key=String(f.get('key')||'').trim(),email=String(f.get('email')||'').trim(),password=String(f.get('password')||'');if(!key.startsWith('sb_publishable_')){toast('請輸入 Publishable key');return}cloudBusy=true;try{const r=await fetch(CLOUD_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'apikey':key,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const v=await r.json();if(!r.ok||!v.access_token||!v.user?.id)throw Error(v.msg||v.error_description||v.message||'登入失敗');cloudKey=key;cloudToken=v.access_token;cloudUser=v.user.id;toast('雲端登入成功（尚未同步）');render()}catch(err){toast('登入失敗：'+err.message)}finally{cloudBusy=false}}
+async function cloudRequest(path,options={}){await ensureCloudSession();const send=()=>fetch(CLOUD_URL+path,{...options,headers:{...cloudHeaders(),...(options.headers||{})}});let r=await send();if(r.status===401&&cloudRefreshToken){await refreshCloudSession();r=await send()}const raw=await r.text();let value;try{value=raw?JSON.parse(raw):null}catch{value=raw}if(!r.ok)throw Error((value&&(value.message||value.msg||value.error_description||value.error))||'HTTP '+r.status);return value}
+async function cloudLogin(e){e.preventDefault();if(cloudBusy)return;const f=new FormData(e.target);const key=String(f.get('key')||'').trim(),email=String(f.get('email')||'').trim(),password=String(f.get('password')||'');if(!key.startsWith('sb_publishable_')){toast('請輸入 Publishable key');return}cloudBusy=true;try{const r=await fetch(CLOUD_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'apikey':key,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const v=await r.json();if(!r.ok||!v.access_token||!v.user?.id)throw Error(v.msg||v.error_description||v.message||'登入失敗');cloudKey=key;cloudToken=v.access_token;cloudUser=v.user.id;cloudRefreshToken=v.refresh_token;cloudExpiresAt=Date.now()+Number(v.expires_in||3600)*1000;saveCloudSession();toast('雲端登入成功（尚未同步）');render()}catch(err){toast('登入失敗：'+err.message)}finally{cloudBusy=false}}
 async function cloudCounts(){let result={};for(const n of cloudStores){const rows=await cloudRequest('/rest/v1/'+n+'?select=id&owner_id=eq.'+encodeURIComponent(cloudUser)+'&limit=1');result[n]=rows.length}return result}
 async function cloudUpload(){if(cloudBusy||!cloudToken)return;cloudBusy=true;try{const local={};for(const n of cloudStores)local[n]=await all(n);const remote=await cloudCounts();if(Object.values(remote).some(Boolean))throw Error('雲端已有資料，為避免覆蓋，已停止上傳。此版本只支援首次空雲端上傳。');if(!local.trips.length)throw Error('本機沒有旅程，不需要上傳');if(!confirm('確認雲端目前為空。要將本機 '+local.trips.length+' 趟旅程及其資料首次上傳嗎？上傳前請先匯出完整 JSON 備份。'))return;
 for(const n of cloudStores){const records=local[n].map(x=>({id:String(x.id),owner_id:cloudUser,...(n==='trips'?{}:{trip_id:String(x.tripId)}),data:x}));if(!records.length)continue;for(let i=0;i<records.length;i+=200)await cloudRequest('/rest/v1/'+n,{method:'POST',headers:{'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify(records.slice(i,i+200))})}toast('首次上傳完成；請再次核對雲端資料');}catch(err){alert('雲端上傳未完成：'+err.message+'\n若部分資料已上傳，請勿重試覆蓋，先確認資料。')}finally{cloudBusy=false;render()}}
@@ -91,7 +97,7 @@ function snapshotDifferences(local,remote){
     lines.push(n+'：本機 '+a.size+' 筆／雲端 '+b.size+' 筆；本機缺少 '+missingLocal+'、雲端缺少 '+missingCloud+'、內容不同 '+different);
     if(fields.size)lines.push('  差異欄位（僅名稱與筆數）：'+[...fields].map(([k,v])=>k+' '+v).join('、'));
   }
-  return lines.join('\\n');
+  return lines.join('\n');
 }
 async function localSnapshot(){const data={};for(const n of cloudStores)data[n]=await all(n);return normalized(data)}
 async function remoteSnapshot(){const data={};for(const n of cloudStores){data[n]=[];for(let offset=0;;offset+=500){const batch=await cloudRequest('/rest/v1/'+n+'?select=data&owner_id=eq.'+encodeURIComponent(cloudUser)+'&order=id.asc&limit=500&offset='+offset);data[n].push(...batch.map(x=>x.data));if(batch.length<500)break}}return normalized(data)}
@@ -100,26 +106,85 @@ async function replaceLocalSnapshot(data){validateSnapshot(data);await new Promi
 async function pushSnapshot(local,remote){
   validateSnapshot(local);validateSnapshot(remote);
   // 先建立/更新旅程，再建立/更新子項目；刪除則先刪子項目再刪旅程。
-  for(const n of cloudStores){const before=new Map(remote[n].map(x=>[String(x.id),x]));const changed=local[n].filter(x=>JSON.stringify(x)!==JSON.stringify(before.get(String(x.id))));for(let i=0;i<changed.length;i+=100){const records=changed.slice(i,i+100).map(x=>({id:String(x.id),owner_id:cloudUser,...(n==='trips'?{}:{trip_id:String(x.tripId)}),data:x}));await cloudRequest('/rest/v1/'+n+'?on_conflict=id',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(records)})}}
+  for(const n of cloudStores){const before=new Map(remote[n].map(x=>[String(x.id),x]));const changed=local[n].filter(x=>!equalSync(x,before.get(String(x.id))));for(let i=0;i<changed.length;i+=100){const records=changed.slice(i,i+100).map(x=>({id:String(x.id),owner_id:cloudUser,...(n==='trips'?{}:{trip_id:String(x.tripId)}),data:x}));await cloudRequest('/rest/v1/'+n+'?on_conflict=id',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(records)})}}
   for(const n of [...cloudStores].reverse()){const keep=new Set(local[n].map(x=>String(x.id)));for(const x of remote[n])if(!keep.has(String(x.id)))await cloudRequest('/rest/v1/'+n+'?id=eq.'+encodeURIComponent(String(x.id))+'&owner_id=eq.'+encodeURIComponent(cloudUser),{method:'DELETE'})}
+}
+// 逐筆三方合併：以本機保存的同步基準為共同祖先。
+// 不同紀錄的修改可合併；同筆紀錄若修改不同欄位也可合併；同欄位衝突一律停止。
+function equalSync(a,b){return JSON.stringify(canonicalValue(a))===JSON.stringify(canonicalValue(b))}
+function mergeRecord(base,local,remote,store,id){
+  if(equalSync(local,remote))return local;
+  if(equalSync(local,base))return remote;
+  if(equalSync(remote,base))return local;
+  if(base===undefined||local===undefined||remote===undefined)
+    throw Error(store+'：同一筆紀錄在兩邊有新增、刪除或修改衝突（ID 末四碼 '+String(id).slice(-4)+'）。');
+  const merged={};
+  for(const k of new Set([...Object.keys(base),...Object.keys(local),...Object.keys(remote)])){
+    const bv=base[k],lv=local[k],rv=remote[k];
+    if(equalSync(lv,rv)){if(k in local)merged[k]=lv;continue}
+    if(equalSync(lv,bv)){if(k in remote)merged[k]=rv;continue}
+    if(equalSync(rv,bv)){if(k in local)merged[k]=lv;continue}
+    throw Error(store+'：同一筆紀錄的「'+k+'」欄位兩邊都有修改（ID 末四碼 '+String(id).slice(-4)+'）。');
+  }
+  return merged;
+}
+function mergeSnapshots(base,local,remote){
+  const merged={};const changes=[];
+  for(const n of cloudStores){
+    const bm=new Map(base[n].map(x=>[String(x.id),x]));
+    const lm=new Map(local[n].map(x=>[String(x.id),x]));
+    const rm=new Map(remote[n].map(x=>[String(x.id),x]));
+    merged[n]=[];
+    for(const id of new Set([...bm.keys(),...lm.keys(),...rm.keys()])){
+      const result=mergeRecord(bm.get(id),lm.get(id),rm.get(id),n,id);
+      if(result!==undefined)merged[n].push(result);
+      if(!equalSync(result,rm.get(id)))changes.push(n+': '+id);
+    }
+  }
+  validateSnapshot(merged);
+  return {merged:normalized(merged),changes};
 }
 async function syncManual(){if(cloudBusy||!cloudToken)return;cloudBusy=true;try{
   const local=await localSnapshot(),remote=await remoteSnapshot();validateSnapshot(local);validateSnapshot(remote);
-  const l=snapshotText(local),r=snapshotText(remote),base=localStorage.getItem(syncKey());
-  if(base===null){if(l!==r)throw Error('本機與雲端內容不同，已停止建立基準。\\n\\n'+snapshotDifferences(local,remote)+'\\n\\n本次僅查詢，未修改任何資料。');if(!confirm('本機與雲端四類資料完全一致。要建立這台裝置的同步基準嗎？這一步不修改任何資料。'))return;localStorage.setItem(syncKey(),l);alert('已建立同步基準。以後可按「檢查並同步」。');return}
+  const l=snapshotText(local),r=snapshotText(remote),baseText=localStorage.getItem(syncKey());
+  if(baseText===null){
+    if(l!==r)throw Error('本機與雲端內容不同，已停止建立基準。\n'+snapshotDifferences(local,remote)+'\n本次僅查詢，未修改任何資料。');
+    if(!confirm('本機與雲端四類資料完全一致。要建立這台裝置的同步基準嗎？'))return;
+    localStorage.setItem(syncKey(),l);alert('已建立同步基準。');return;
+  }
   if(l===r){localStorage.setItem(syncKey(),l);alert('本機與雲端資料一致，無需同步。');return}
-  const localChanged=l!==base,remoteChanged=r!==base;
-  if(localChanged&&remoteChanged)throw Error('本機和雲端都曾修改，已停止。\\n'+snapshotDifferences(local,remote)+'\\n請保留兩邊資料及 JSON 備份。');
-  if(!localChanged&&remoteChanged){if(!confirm('偵測到雲端有更新、本機沒有變動。要下載雲端更新到這台裝置嗎？'))return;await replaceLocalSnapshot(remote);localStorage.setItem(syncKey(),r);alert('已從雲端更新本機資料。');return}
-  if(localChanged&&!remoteChanged){if(!confirm('偵測到本機有更新、雲端沒有變動。要將本機變更（包含刪除）同步到雲端嗎？'))return;await pushSnapshot(local,remote);const check=await remoteSnapshot();if(snapshotText(check)!==l)throw Error('雲端回讀結果不一致，已停止更新同步基準，請勿重試前先檢查。');localStorage.setItem(syncKey(),l);alert('本機變更已同步到雲端，並完成回讀核對。');return}
-  throw Error('同步狀態無法判定，已停止。');
+  let base;
+  try{base=JSON.parse(baseText);validateSnapshot(base)}catch{throw Error('同步基準無法讀取，已停止；請保留兩邊備份。')}
+  const {merged,changes}=mergeSnapshots(base,local,remote);
+  const mergedText=snapshotText(merged);
+  const localUpdates=!equalSync(merged,local),cloudUpdates=!equalSync(merged,remote);
+  if(!localUpdates&&!cloudUpdates){localStorage.setItem(syncKey(),mergedText);alert('無需同步。');return}
+  const message='已比對四類資料，可安全合併不同紀錄／不同欄位的修改。\n'+
+    (cloudUpdates?'雲端將更新 '+changes.length+' 筆紀錄。\n':'雲端不需修改。\n')+
+    (localUpdates?'本機也將更新。\n':'本機不需修改。\n')+
+    '請確認兩邊都已保留 JSON 備份。要繼續嗎？';
+  if(!confirm(message))return;
+  // 防止確認視窗開啟期間雲端已變更。此測試版尚不提供資料庫原子交易鎖。
+  const latest=await remoteSnapshot();
+  if(snapshotText(latest)!==r)throw Error('確認期間雲端又有新變更，已停止。請重新檢查。');
+  if(cloudUpdates){
+    // 只寫入合併結果；不得把電腦舊快照整包覆蓋到雲端。
+    await pushSnapshot(merged,remote);
+    const check=await remoteSnapshot();
+    if(snapshotText(check)!==mergedText)throw Error('雲端回讀不一致，已停止更新本機與同步基準；請勿重試上傳。');
+  }
+  if(localUpdates)await replaceLocalSnapshot(merged);
+  localStorage.setItem(syncKey(),mergedText);
+  alert('同步完成。'+(cloudUpdates?' 雲端已更新。':'')+(localUpdates?' 本機已更新。':''));
 }catch(err){alert('同步未執行或未完成：'+err.message+'\n請勿清除本機資料。')}finally{cloudBusy=false;render()}}
-function cloudSettingsHtml(){return `<hr class="divider"><h3>雲端資料與手動雙向同步（第二階段測試）</h3><div class="notice">目前是手動同步測試版，不會在背景自動同步。首次同步前會比對四類資料，只有完全一致才建立基準；若手機與電腦兩邊都改過，會停止以避免覆蓋。操作前請保留 JSON 備份。</div>${cloudToken?`<p>已登入雲端帳號。<strong>手動同步測試版，尚未啟用自動同步。</strong></p><div class="actions"><button class="btn" id="cloudSync">檢查並同步／建立基準</button><button class="btn secondary" id="cloudUpload">首次上傳本機資料</button><button class="btn secondary" id="cloudDownload">空白裝置下載資料</button><button class="btn secondary" id="cloudLogout">登出</button></div>`:`<form id="cloudLogin"><label>Supabase Publishable key</label><input name="key" type="text" autocomplete="off" required placeholder="sb_publishable_..."><label style="margin-top:10px">登入 Email</label><input name="email" type="email" autocomplete="username" required><label style="margin-top:10px">密碼</label><input name="password" type="password" autocomplete="current-password" required><button class="btn" style="margin-top:12px" type="submit">登入雲端（不會上傳資料）</button></form>`}<p class="muted">本版可手動雙向同步單邊變更（含刪除）；若雙邊同時有變更會拒絕同步，不會自動合併衝突。尚未支援背景自動同步或同行者分享。</p>`}
-function bindCloud(){if(cloudToken){$('#cloudSync').onclick=syncManual;$('#cloudUpload').onclick=cloudUpload;$('#cloudDownload').onclick=cloudDownload;$('#cloudLogout').onclick=()=>{cloudToken='';cloudUser='';cloudKey='';render()}}else $('#cloudLogin').onsubmit=cloudLogin}
+async function createShareLink(){if(cloudBusy||!cloudToken)return;const trip=selected();if(!trip){alert('請先選擇要分享的旅程');return}if(!confirm('要建立「'+trip.name+'」的唯讀分享連結嗎？\n擁有連結的人可查看該旅程所有已同步的行程、費用、備註與訂位資訊（包括可能的 QR 碼）。\n請只傳給信任的同行者。'))return;cloudBusy=true;try{const result=await cloudRequest('/rest/v1/rpc/create_travel_share',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({p_trip_id:String(trip.id)})});if(!result?.token)throw Error('無法取得分享連結');const url=new URL('./share.html',location.href);url.searchParams.set('key',cloudKey);url.hash='token='+encodeURIComponent(result.token);await navigator.clipboard.writeText(url.href);alert('唯讀連結已複製。\n只傳給信任的同行者。若更新行程，請先手動同步到雲端。')}catch(e){alert('建立分享失敗：'+e.message+'\n請確認已先在 Supabase 執行分享權限 SQL。')}finally{cloudBusy=false}}
+async function revokeShare(){const trip=selected();if(!trip||!confirm('撤銷目前旅程的分享連結？舊連結將立即失效。'))return;cloudBusy=true;try{await cloudRequest('/rest/v1/rpc/revoke_travel_share',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({p_trip_id:String(trip.id)})});alert('分享連結已撤銷。')}catch(e){alert('撤銷失敗：'+e.message)}finally{cloudBusy=false}}
+function cloudSettingsHtml(){return `<hr class="divider"><h3>雲端同步與同行者唯讀分享（測試版）</h3><div class="notice">目前仍為手動同步，不會在背景自動同步。已支援逐筆三方合併，真正衝突會停止；操作前請保留 JSON 備份。</div>${cloudToken?`<p>已登入雲端帳號。<strong>手動同步測試版，尚未啟用自動同步。</strong></p><div class="actions"><button class="btn" id="cloudSync">檢查並同步／建立基準</button><button class="btn secondary" id="cloudUpload">首次上傳本機資料</button><button class="btn secondary" id="cloudDownload">空白裝置下載資料</button><button class="btn secondary" id="cloudLogout">登出</button></div><div class="actions" style="margin-top:10px"><button class="btn secondary" id="cloudShare">建立同行者唯讀連結</button><button class="btn secondary" id="cloudRevoke">撤銷分享</button></div>`:`<form id="cloudLogin"><label>Supabase Publishable key</label><input name="key" type="text" autocomplete="off" required placeholder="sb_publishable_..."><label style="margin-top:10px">登入 Email</label><input name="email" type="email" autocomplete="username" required><label style="margin-top:10px">密碼</label><input name="password" type="password" autocomplete="current-password" required><button class="btn" style="margin-top:12px" type="submit">登入雲端（不會上傳資料）</button></form>`}<p class="muted">本版支援逐筆三方合併，真正衝突會停止；目前仍需手動同步。分享功能需先在 Supabase 執行附帶的權限 SQL。</p>`}
+function bindCloud(){if(cloudToken){$('#cloudSync').onclick=syncManual;$('#cloudUpload').onclick=cloudUpload;$('#cloudDownload').onclick=cloudDownload;$('#cloudShare').onclick=createShareLink;$('#cloudRevoke').onclick=revokeShare;$('#cloudLogout').onclick=async()=>{if(!confirm('確定登出此裝置的雲端帳號？本機行程不會刪除。'))return;try{await cloudRequest('/auth/v1/logout',{method:'POST'})}catch{}clearCloudSession();render()}}else $('#cloudLogin').onsubmit=cloudLogin}
 
 function settingsHtml(){return `<div class="card"><h2 class="title">備份與還原</h2><p class="muted">資料保存在目前 iPhone 的此 App 網站儲存空間。GitHub 不會保存你的行程。</p><div class="notice">重要：iPhone 清除網站資料、移除 App 或系統清理時，本機資料可能遺失。請定期備份到 Google Drive。</div><hr class="divider"><h3>完整備份（推薦）</h3><p class="muted">JSON 可完整還原所有旅程、行前準備、時間、備註、連結與花費；儲存到 Google Drive 即可。</p><button class="btn" id="backup">匯出完整備份 JSON</button><hr class="divider"><h3>Excel 查看</h3><p class="muted">Excel 包含行程、準備事項、行李清單及花費明細與統計；不可用來還原資料。</p><button class="btn secondary" id="csv">匯出 Excel（.xlsx）</button><hr class="divider"><h3>還原資料</h3><p class="muted">選擇先前匯出的 JSON，將取代目前所有資料。</p><input type="file" id="restore" accept=".json,application/json"><hr class="divider"><div class="muted">目前：${trips.length} 趟旅程、${items.length} 筆行程／花費、${preps.length} 筆行前準備。雲端功能為第二階段手動同步測試版。</div>${cloudSettingsHtml()}</div>`}
 function bindSettings(){$('#backup').onclick=exportJson;$('#csv').onclick=exportExcel;$('#restore').onchange=e=>importJson(e.target.files[0]);bindCloud()}
-async function init(){try{db=await openDb();await refresh();$('#addTripTop').onclick=()=>tripForm();$('#closeModal').onclick=close;$('#modal').onclick=e=>{if(e.target.id==='modal')close()};document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render()});if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});}catch(e){$('#view').innerHTML=`<div class="card"><h2>無法開啟本機資料庫</h2><p>${esc(e.message)}</p><p>請使用 Safari 的 HTTPS 網址開啟，並確認不是無痕瀏覽。</p></div>`}}
+async function init(){try{db=await openDb();await refresh();await restoreCloudSession();$('#addTripTop').onclick=()=>tripForm();$('#closeModal').onclick=close;$('#modal').onclick=e=>{if(e.target.id==='modal')close()};document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render()});if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});}catch(e){$('#view').innerHTML=`<div class="card"><h2>無法開啟本機資料庫</h2><p>${esc(e.message)}</p><p>請使用 Safari 的 HTTPS 網址開啟，並確認不是無痕瀏覽。</p></div>`}}
 init();
 
 // Self-contained, offline XLSX writer: OOXML worksheets in an uncompressed ZIP archive.
