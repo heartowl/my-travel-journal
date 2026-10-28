@@ -18,5 +18,34 @@ else {const ds=days(t);if(!ds.includes(day))day=ds[0]||'';html+=`<div class="swi
 if(tab==='prep'){html+=`<div class="switch"><button data-prep="tasks" class="${prepTab==='tasks'?'active':''}">準備事項</button><button data-prep="packing" class="${prepTab==='packing'?'active':''}">行李清單</button></div><section class="card"><h2>${prepTab==='tasks'?'行前準備':'行李清單'}</h2>`;if(prepTab==='tasks')html+=data.preps.filter(x=>x.tripId===tripId).map(x=>`<div class="entry"><strong>${esc(x.name)}</strong>${x.note?`<p>${esc(x.note)}</p>`:''}<p class="muted">${esc(x.doneDate?'已完成 '+x.doneDate:'尚未完成')}</p>${Number(x.amount)>0?`<p>${esc(x.currency||'TWD')} ${money(x.amount)}</p>`:''}</div>`).join('')||'<p>尚無準備事項</p>';else html+=data.packing.filter(x=>x.tripId===tripId).map(x=>`<p>${x.done?'☑':'☐'} ${esc(x.name)}</p>`).join('')||'<p>尚無行李項目</p>';html+='</section>'}
 else {const es=data.items.filter(x=>x.tripId===tripId&&x.date===day&&x.kind!=='expense').sort((a,b)=>(a.time||'99:99').localeCompare(b.time||'99:99')||(a.order||0)-(b.order||0));html+=`<section class="card"><p class="muted">${esc(t.name)} · ${esc(t.region||'')}</p><h2>${esc(dateLabel(day))} 行程</h2><div class="days">${ds.map((d,i)=>`<button data-day="${esc(d)}" class="${day===d?'active':''}"><small>Day ${i+1}</small>${dateLabel(d)}</button>`).join('')}</div>${es.map(entry).join('')||'<p>這一天尚無行程</p>'}</section>`}}
 out.innerHTML=html;$('#tripSelect').onchange=e=>{tripId=e.target.value;day='';render()};document.querySelectorAll('[data-trip]').forEach(b=>b.onclick=()=>{tripId=b.dataset.trip;tab='timeline';day='';render()});document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{day=b.dataset.day;render()});document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{tab=b.dataset.view;render()});document.querySelectorAll('[data-prep]').forEach(b=>b.onclick=()=>{prepTab=b.dataset.prep;render()});document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab||(tab==='prep'&&b.dataset.tab==='timeline')))}
-async function load(){const out=$('#result');out.textContent='正在載入旅行手帳…';try{const u=new URL(location.href),key=u.searchParams.get('key'),token=new URLSearchParams(u.hash.slice(1)).get('token');if(!key?.startsWith('sb_publishable_')||!/^[0-9a-f]{64}$/.test(token||''))throw Error('分享連結不完整');const r=await fetch(BASE+'/rest/v1/rpc/read_journal_share',{method:'POST',headers:{apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({p_token:token}),cache:'no-store'});const v=await r.json();if(!r.ok)throw Error(v.message||'無法讀取分享資料');if(!Array.isArray(v?.trips))throw Error('整本分享連結已失效或不存在');data={trips:v.trips.sort((a,b)=>(b.start||'').localeCompare(a.start||'')),items:v.items||[],preps:v.preps||[],packing:v.packing||[]};render()}catch(e){out.textContent='無法載入：'+e.message}}
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render()});$('#reload').onclick=load;load();
+// 唯讀頁面每 30 秒檢查一次；只在內容改變時重繪，避免打斷親友操作。
+// 分頁回到前景時立即檢查；背景時不輪詢。連線失敗保留上次成功畫面。
+let shareBusy=false,shareSignature='',shareLastSuccess=false;
+async function load(silent=false){
+  if(shareBusy||document.hidden&&silent)return;
+  shareBusy=true;
+  const out=$('#result'),status=$('#shareStatus');
+  if(!silent&&!shareLastSuccess)out.textContent='正在載入旅行手帳…';
+  if(status)status.textContent=silent?'正在檢查更新…':'正在取得最新資料…';
+  try{
+    const u=new URL(location.href),key=u.searchParams.get('key'),token=new URLSearchParams(u.hash.slice(1)).get('token');
+    if(!key?.startsWith('sb_publishable_')||!/^[0-9a-f]{64}$/.test(token||''))throw Error('分享連結不完整');
+    const r=await fetch(BASE+'/rest/v1/rpc/read_journal_share',{method:'POST',headers:{apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({p_token:token}),cache:'no-store'});
+    const v=await r.json();if(!r.ok)throw Error(v.message||'無法讀取分享資料');
+    if(!Array.isArray(v?.trips))throw Error('整本分享連結已失效或不存在');
+    const next={trips:v.trips.sort((a,b)=>(b.start||'').localeCompare(a.start||'')),items:v.items||[],preps:v.preps||[],packing:v.packing||[]};
+    const signature=JSON.stringify(next);
+    if(signature!==shareSignature){data=next;shareSignature=signature;render()}
+    shareLastSuccess=true;
+    if(status)status.textContent='已取得最新資料 · 每 30 秒自動檢查';
+  }catch(e){
+    if(!shareLastSuccess)out.textContent='無法載入：'+e.message;
+    if(status)status.textContent='更新失敗，保留上次畫面；請確認網路或分享連結是否有效';
+  }finally{shareBusy=false}
+}
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render()});
+$('#reload').onclick=()=>load(false);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)load(true)});
+window.addEventListener('online',()=>load(true));
+setInterval(()=>{if(!document.hidden)load(true)},30000);
+load();
