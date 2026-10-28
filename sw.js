@@ -1,6 +1,6 @@
 // Cache version must match the script URL used by index.html.
-const CACHE = 'travel-journal-v3-14-journal-share';
-const APP_SCRIPT = './app.js?v=journal-share-20261028-1';
+const CACHE = 'travel-journal-v3-15-auto-sync-pilot';
+const APP_SCRIPT = './app.js?v=auto-sync-pilot-20261028-1';
 const FILES = ['./', './index.html', APP_SCRIPT, './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', event => {
