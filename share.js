@@ -17,7 +17,15 @@ else if(tab==='expenses'){const es=[...data.items.filter(x=>x.tripId===tripId&&N
 else {const ds=days(t);if(!ds.includes(day))day=ds[0]||'';html+=`<div class="switch"><button data-view="timeline" class="${tab==='timeline'?'active':''}">行程</button><button data-view="prep" class="${tab==='prep'?'active':''}">行前準備</button></div>`;
 if(tab==='prep'){html+=`<div class="switch"><button data-prep="tasks" class="${prepTab==='tasks'?'active':''}">準備事項</button><button data-prep="packing" class="${prepTab==='packing'?'active':''}">行李清單</button></div><section class="card"><h2>${prepTab==='tasks'?'行前準備':'行李清單'}</h2>`;if(prepTab==='tasks')html+=data.preps.filter(x=>x.tripId===tripId).map(x=>`<div class="entry"><strong>${esc(x.name)}</strong>${x.note?`<p>${esc(x.note)}</p>`:''}<p class="muted">${esc(x.doneDate?'已完成 '+x.doneDate:'尚未完成')}</p>${Number(x.amount)>0?`<p>${esc(x.currency||'TWD')} ${money(x.amount)}</p>`:''}</div>`).join('')||'<p>尚無準備事項</p>';else html+=data.packing.filter(x=>x.tripId===tripId).map(x=>`<p>${x.done?'☑':'☐'} ${esc(x.name)}</p>`).join('')||'<p>尚無行李項目</p>';html+='</section>'}
 else {const es=data.items.filter(x=>x.tripId===tripId&&x.date===day&&x.kind!=='expense').sort((a,b)=>(a.time||'99:99').localeCompare(b.time||'99:99')||(a.order||0)-(b.order||0));html+=`<section class="card"><p class="muted">${esc(t.name)} · ${esc(t.region||'')}</p><h2>${esc(dateLabel(day))} 行程</h2><div class="days">${ds.map((d,i)=>`<button data-day="${esc(d)}" class="${day===d?'active':''}"><small>Day ${i+1}</small>${dateLabel(d)}</button>`).join('')}</div>${es.map(entry).join('')||'<p>這一天尚無行程</p>'}</section>`}}
-out.innerHTML=html;$('#tripSelect').onchange=e=>{tripId=e.target.value;day='';render()};document.querySelectorAll('[data-trip]').forEach(b=>b.onclick=()=>{tripId=b.dataset.trip;tab='timeline';day='';render()});document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{day=b.dataset.day;render()});document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{tab=b.dataset.view;render()});document.querySelectorAll('[data-prep]').forEach(b=>b.onclick=()=>{prepTab=b.dataset.prep;render()});document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab||(tab==='prep'&&b.dataset.tab==='timeline')))}
+out.innerHTML=html;
+// 日期列在重新繪製後，將目前選取日期移到可見區域；不改變整頁捲動位置。
+const activeDayButton=out.querySelector('.days button.active');
+if(activeDayButton){
+  const strip=activeDayButton.closest('.days');
+  const target=activeDayButton.offsetLeft-strip.offsetLeft-(strip.clientWidth-activeDayButton.offsetWidth)/2;
+  strip.scrollLeft=Math.max(0,target);
+}
+$('#tripSelect').onchange=e=>{tripId=e.target.value;day='';render()};document.querySelectorAll('[data-trip]').forEach(b=>b.onclick=()=>{tripId=b.dataset.trip;tab='timeline';day='';render()});document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{day=b.dataset.day;render()});document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{tab=b.dataset.view;render()});document.querySelectorAll('[data-prep]').forEach(b=>b.onclick=()=>{prepTab=b.dataset.prep;render()});document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab||(tab==='prep'&&b.dataset.tab==='timeline')))}
 // 唯讀頁面每 30 秒檢查一次；只在內容改變時重繪，避免打斷親友操作。
 // 分頁回到前景時立即檢查；背景時不輪詢。連線失敗保留上次成功畫面。
 let shareBusy=false,shareSignature='',shareLastSuccess=false;
@@ -44,7 +52,7 @@ async function load(silent=false){
   }finally{shareBusy=false}
 }
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render()});
-$('#reload').onclick=()=>load(false);
+
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)load(true)});
 window.addEventListener('online',()=>load(true));
 setInterval(()=>{if(!document.hidden)load(true)},30000);
