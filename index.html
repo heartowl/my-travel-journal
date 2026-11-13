@@ -10,4 +10,41 @@
   .dialog .two{grid-template-columns:minmax(0,1fr)}
   .dialog{width:100%;max-width:100%;overflow-x:hidden}
 }
-</style></head><body><header><div style="max-width:740px;margin:auto" class="flex between"><div><small>MY TRAVEL JOURNAL</small><h1>我的旅行手帳</h1></div><button class="btn secondary small" id="addTripTop">＋ 旅程</button></div></header><main class="shell"><div id="view"></div></main><nav class="tabs" aria-label="主要功能"><button data-tab="timeline" class="active"><span>▤</span>行程</button><button data-tab="trips"><span>◈</span>旅程</button><button data-tab="expenses"><span>＄</span>花費</button><button data-tab="settings"><span>⚙</span>備份</button></nav><div id="modal" class="modal"><div class="dialog"><div class="flex between"><h2 id="modalTitle"></h2><button class="btn secondary small" id="closeModal">關閉</button></div><div id="modalBody"></div></div></div><div id="toast" role="status"></div><script src="app.js?v=prep-date-20261029-2" defer></script></body></html>
+
+/* 2026 彩色介面：只調整視覺，不更動資料、雲端與排序 */
+:root{--teal:#254b54;--transport:#ddf1dc;--spot:#dceefa;--food:#ffe8d3;--hotel:#ece2fa;--other:#fbe5ea}
+body{background:#f5f8f7}
+header{background:linear-gradient(115deg,#254b54,#2c7980)}
+.card{border-color:#e3ecea;box-shadow:0 3px 12px #244b5410}
+.shell{padding-bottom:calc(85px + env(safe-area-inset-bottom))}
+.tabs{justify-content:space-around;padding:5px 8px calc(5px + env(safe-area-inset-bottom));box-shadow:0 -3px 15px #254b5412}
+.tabs button{flex:1;display:flex;align-items:center;justify-content:center;padding:4px 2px;background:transparent;color:#254b54}
+.nav-symbol{width:52px;height:52px;display:flex;align-items:center;justify-content:center;border-radius:50%;font-size:28px;transition:border-color .15s;border:2px solid transparent}
+.nav-symbol svg{width:32px;height:32px}
+.tabs button[data-tab="timeline"] .nav-symbol{background:#fce3dd;color:#c45e3d}
+.tabs button[data-tab="trips"] .nav-symbol{background:#dceefa;color:#247fa5}
+.tabs button[data-tab="expenses"] .nav-symbol{background:#fff0cb}
+.tabs button[data-tab="settings"] .nav-symbol{background:#eee2fc;color:#7951a9}
+.tabs button.active .nav-symbol{border-color:currentColor;box-shadow:0 0 0 2px #fff inset}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.days{gap:8px;padding:7px 2px 13px;scrollbar-width:none}
+.days::-webkit-scrollbar{display:none}
+.days button{border:1px solid #d9e7e6;min-width:66px;font-weight:650;background:#dceefa}
+.days button:nth-child(3n+2){background:#ddf1dc}.days button:nth-child(3n){background:#ece2fa}
+.days button.active,.days button:nth-child(3n+2).active,.days button:nth-child(3n).active{background:#254b54;color:white;border:2px solid #f0d279;box-shadow:0 1px 5px #254b5433}
+.entry{margin-top:9px;padding-top:6px;padding-bottom:10px}
+.entry[data-kind="transport"]{border-left-color:#80b98d}.entry[data-kind="spot"]{border-left-color:#86b9df}.entry[data-kind="food"]{border-left-color:#e8ad7a}.entry[data-kind="hotel"]{border-left-color:#b39ad9}.entry[data-kind="other"]{border-left-color:#e6b0c0}
+.entry .time{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:5px 10px;color:#254b54;background:#fbe5ea;font-size:13px}
+.entry .time svg{width:16px;height:16px;flex-shrink:0}
+.entry[data-kind="transport"] .time{background:var(--transport)}.entry[data-kind="spot"] .time{background:var(--spot)}.entry[data-kind="food"] .time{background:var(--food)}.entry[data-kind="hotel"] .time{background:var(--hotel)}
+.icon-edit{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px;padding:8px!important;border-radius:14px!important;background:#e4f2f4!important;color:#23626d!important}
+.icon-edit svg{width:20px;height:20px}
+.prep-entry{padding:10px 11px!important;margin:8px 0!important;border-radius:0 12px 12px 0;background:#fff9ec;border-left-color:#e7b957}
+.prep-entry.is-done{background:#eef8ef;border-left-color:#8ac596}
+.prep-entry .muted{margin-top:3px!important}
+.prep-entry p{margin:4px 0}.prep-entry label{margin-bottom:0;min-width:0}.prep-entry input[type="checkbox"]{accent-color:#4b9a6b;width:21px!important;height:21px}
+.card:has(>.days){padding-bottom:10px}
+
+button:is(#editTrip,[data-edit],[data-prep-edit],[data-exp],[data-edit-trip],[data-pack-edit]){display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px;padding:8px!important;border-radius:13px;background:#e4f2f4;color:#23626d}
+button:is(#editTrip,[data-edit],[data-prep-edit],[data-exp],[data-edit-trip],[data-pack-edit]) svg{width:21px;height:21px}
+</style></head><body><header><div style="max-width:740px;margin:auto" class="flex between"><div><small>MY TRAVEL JOURNAL</small><h1>我的旅行手帳</h1></div><button class="btn secondary small" id="addTripTop">＋ 旅程</button></div></header><main class="shell"><div id="view"></div></main><nav class="tabs" aria-label="主要功能"><button data-tab="timeline" aria-label="行程" title="行程" class="active"><span class="nav-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h2M12 14h2M7 18h2"/></svg></span><span class="sr-only">行程</span></button><button data-tab="trips" aria-label="旅程" title="旅程"><span class="nav-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="14" rx="2"/><path d="M9 7V4h6v3M8 21v-2M16 21v-2"/></svg></span><span class="sr-only">旅程</span></button><button data-tab="expenses" aria-label="花費" title="花費"><span class="nav-symbol">💸</span><span class="sr-only">花費</span></button><button data-tab="settings" aria-label="備份" title="備份"><span class="nav-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11a5 5 0 0 1 9.6-1.8A4 4 0 1 1 18 17h-6"/><path d="M2 19h5l3-2h3a2 2 0 0 1 0 4H9l-3 1H2z"/></svg></span><span class="sr-only">備份</span></button></nav><div id="modal" class="modal"><div class="dialog"><div class="flex between"><h2 id="modalTitle"></h2><button class="btn secondary small" id="closeModal">關閉</button></div><div id="modalBody"></div></div></div><div id="toast" role="status"></div><script src="app.js?v=color-ui-20261113-1" defer></script></body></html>
